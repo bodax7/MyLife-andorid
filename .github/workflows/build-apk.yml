@@ -1,0 +1,69 @@
+name: بناء تطبيق أندرويد
+
+# بيشتغل لوحده مع أي تعديل في المستودع، وتقدر تشغله يدوي من تبويب Actions ← Run workflow
+on:
+  push:
+    branches: [main]
+    paths-ignore: ['README.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: التأكد من مفتاح التوقيع
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::لسه مضفتش كلمة السر: Settings ← Secrets and variables ← Actions ← New repository secret باسم KEYSTORE_PASSWORD"; exit 1; fi
+          if [ ! -f android.keystore ]; then echo "::error::ملف android.keystore مش مرفوع في المستودع"; exit 1; fi
+          keytool -list -keystore android.keystore -storepass "$KEYSTORE_PASSWORD" -alias mylife > /dev/null \
+            || { echo "::error::كلمة السر في KEYSTORE_PASSWORD مش مطابقة لملف android.keystore"; exit 1; }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: تجهيز مشروع أندرويد من إعداداتك وموقعك
+        env:
+          VERSION_CODE: ${{ github.run_number }}
+        run: |
+          npm ci --no-audit --no-fund
+          node generate.mjs
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: أدوات أندرويد الرسمية
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;35.0.0" > /dev/null
+
+      - name: بناء التطبيق
+        working-directory: android
+        run: ./gradlew --no-daemon --stacktrace assembleRelease
+
+      - name: التوقيع والتأكد منه
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          BT="$ANDROID_HOME/build-tools/35.0.0"
+          "$BT/zipalign" -p -f 4 android/app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
+          "$BT/apksigner" sign --ks android.keystore --ks-key-alias mylife \
+            --ks-pass env:KEYSTORE_PASSWORD --key-pass env:KEYSTORE_PASSWORD --out MyLife.apk aligned.apk
+          "$BT/apksigner" verify --print-certs MyLife.apk | tee certs.txt
+          grep -qi "SHA-256 digest: fe144af18762a216199d5c6a5731145dd15ec5a60be0ecc41c6c8
