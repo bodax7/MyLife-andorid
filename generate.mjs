@@ -55,6 +55,7 @@ const twa = new TwaManifest({
   appVersion: String(need('رقم_الإصدار')),
   signingKey: { path: '../android.keystore', alias: 'mylife' },
   fallbackType: 'customtabs',
+  minSdkVersion: 24,   // مكتبة جوجل للتطبيق محتاجة أندرويد 7 أو أحدث
   generatorApp: 'mylife-github-build',
   enableSiteSettingsShortcut: true,
   webManifestUrl: manifestUrl.toString(),
